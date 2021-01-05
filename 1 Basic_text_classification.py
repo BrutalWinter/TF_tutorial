@@ -126,7 +126,8 @@ test_ds = raw_test_ds.map(vectorize_text)
 # This will ensure the dataset does not become a bottleneck while training your model.
 # If your dataset is too large to fit into memory, you can also use this method to create a performant on-disk cache,
 # which is more efficient to read than many small files.
-
+# Note: cache will produce exactly the same elements during each iteration through the dataset.
+# If you wish to randomize the iteration order, make sure to call shuffle after calling cache.
 # .prefetch() overlaps data preprocessing and model execution while training.
 AUTOTUNE = tf.data.experimental.AUTOTUNE
 train_ds = train_ds.cache().prefetch(buffer_size=AUTOTUNE)
