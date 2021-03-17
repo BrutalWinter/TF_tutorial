@@ -120,7 +120,7 @@ def load3(path, batch_size,leader='II', input_shape=3, train=False):
 
     def transfer_dataset(value):
         raw_data = tf.io.decode_raw(value, tf.float32)
-        id = tf.cast(tf.slice(raw_data, [0], [1]), tf.int 32)
+        id = tf.cast(tf.slice(raw_data, [0], [1]), tf.int32)
         data = tf.reshape(tf.slice(raw_data, [1], [8000]), (4, 2000, 1))  # 四个导联的数据
 
         if leader.lower()=='i':
