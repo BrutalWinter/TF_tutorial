@@ -208,10 +208,10 @@ def power(x, y):
     result = tf.matmul(x, result)
   return result
 
-print("Eager execution:", timeit.timeit(lambda: power(x, 100), number=1000))
+print("Eager execution:", timeit.timeit(lambda: power(x, 100), number=100))
 
 power_as_graph = tf.function(power)
-print("Graph execution:", timeit.timeit(lambda: power_as_graph(x, 100), number=1000))
+print("Graph execution:", timeit.timeit(lambda: power_as_graph(x, 100), number=100))
 
 
 
@@ -251,16 +251,198 @@ print(a_function_with_python_side_effect(2))# each python naive number is viewed
 print(a_function_with_python_side_effect(3))
 
 
+#######################################################
+print('<<===============  tf.function API  ==============>>')
+# tf.function(
+#     func=None, input_signature=None, autograph=True, experimental_implements=None,
+#     experimental_autograph_options=None, experimental_relax_shapes=False,
+#     experimental_compile=None, experimental_follow_type_hints=None
+# )
+'''tf.function constructs a callable that executes a TensorFlow graph (tf.Graph) created 
+by trace-compiling the TensorFlow operations in func, effectively executing func as a TensorFlow graph.'''
+
+@tf.function
+def f(x, y):
+  print('Tracing happens')
+  return x ** 2 + y
+
+x1 = tf.constant([2, 3])
+y1 = tf.constant([3, -2])
+print('f(x, y)',f(x1, y1))
+print('f(x, y)',f(x1, y1))
+print('f(x, y)',f(y1, x1))
+print('\n')
+
+# Features: func may use data-dependent control flow, including if, for, while break, continue and return statements,
+# those if, for, while break, continue and return will executed normally:
+@tf.function
+def f(x):
+  print('Tracing happens')
+  if tf.reduce_sum(x) > 0:
+    return x * x
+  else:
+    return -x // 2
+
+print('f(tf.constant(-2))',f(tf.constant(-2)))
+print('f(tf.constant(2))',f(tf.constant(2)))
+print('f(2)',f(2))
+print('f(-2)',f(-2))
+print('\n')
+
+# func's closure may include tf.Tensor and tf.Variable objects:
+@tf.function
+def f0():
+  print('Tracing happens')
+  return x2 ** 2 + y2
+x2 = tf.constant([-2, -3])
+y2 = tf.Variable([3, -2])
+print(f0())
+print(f0())
+
+v = tf.Variable(1)
+@tf.function
+def f1(x):
+  print('Tracing happens')
+  for i in tf.range(x):
+    print('inner Tracing happens')
+    v.assign_add(i+1)
+    tf.print(v)
+f1(3)
+f1(3)
+f1(3)
+
+
+#######################################################
+print('<<===============  tf.function API 2 ==============>>')
+'''Key Point: Any Python side-effects (appending to a list, printing with print, etc) will only happen once, when func is traced. 
+To have side-effects executed into your tf.function they need to be written as TF ops:'''
+
+l = []
+@tf.function
+def f2(x):
+  print('Tracing happens')
+  for i in x:
+    print('inner Tracing happens')
+    l.append(i)    # Caution! Will only happen once when tracing, means l only contains single i, since it is a graph, no specific value. only i
+    tf.print(l)
+f2(tf.constant([1, 2, 3]))
+f2(tf.constant([2, 4, 6]))
+f2(tf.constant([3, 6, 9]))
+print('l',l)
 
 
 
+@tf.function
+def f3(x):
+  ta = tf.TensorArray(dtype=tf.float32, size=0, dynamic_size=True)
+  for i in range(len(x)):
+    ta = ta.write(i, x[i] + 1)
+  return ta.stack()
+
+@tf.function
+def f3_2(x):
+  ta = tf.TensorArray(dtype=tf.int32, size=0, dynamic_size=True)
+  step=tf.constant(0)
+  for i in x:# can not use enurmate
+    ta = ta.write(step, i + 1)
+    step+=1
+  return ta.stack()
+print(f3(tf.constant([1., 2, 3])))
+print(f3(tf.constant([1., 2, 3])))
+print(f3(tf.constant([1.1, 2.2, 3.3],dtype=tf.float32)))
+print(f3_2(tf.constant([2, 3, 4])))
+
+print(f3.pretty_printed_concrete_signatures())
+#######################################################
+print('<<===============  tf.function API 3 ==============>>')
+'''Internally, tf.function can build more than one graph, to support arguments with different data types or shapes, 
+since TensorFlow can build more efficient graphs that are specialized on shapes and dtypes. 
+
+tf.function also treats any pure Python value as opaque objects, 
+and builds a separate graph for each set of Python arguments that it encounters.
+
+To obtain an individual graph, use the get_concrete_function method of the callable created by tf.function. 
+It can be called with the same arguments as func and returns a special tf.Graph object:'''
+
+@tf.function
+def f(x):
+  return x + 1
+print(f(tf.constant([1., 2, 3])))
+print(f(tf.constant([2., 2, 3])))
+print('f3.pretty_printed_concrete_signatures()',f3.pretty_printed_concrete_signatures())
+print('isinstance=',isinstance(f.get_concrete_function(1).graph, tf.Graph))
+# Caution: Passing python scalars or lists as arguments to tf.function will always build a new graph.
+# To avoid this, pass numeric arguments as Tensors whenever possible:
 
 
+@tf.function
+def f(x):
+  return tf.abs(x)
+f1 = f.get_concrete_function(1)
+f2 = f.get_concrete_function(2)  # Slow - builds new graph
+print('f1 is f2',f1 is f2)
+
+#######################################################
+print('<<===============  tf.function API 4 ==============>>')
+f1 = f.get_concrete_function(tf.constant(1))
+f2 = f.get_concrete_function(tf.constant(2))  # Fast - reuses f1
+print('f1 is f2',f1 is f2)
+# Python numerical arguments should only be used when they take few distinct values,
+# such as hyperparameters like the number of layers in a neural network.
 
 
+#Input signatures
+#For Tensor arguments, tf.function instantiates a separate graph for every unique set of input shapes and datatypes.
+# The example below creates two separate graphs, each specialized to a different shape:
+
+@tf.function
+def f(x):
+  return x + 1
+vector = tf.constant([1.0, 1.0])
+matrix = tf.constant([[3.0]])
+print('f.get_concrete_function(vector) is f.get_concrete_function(matrix)=',f.get_concrete_function(vector) is f.get_concrete_function(matrix))
+print('f.pretty_printed_concrete_signatures()',f.pretty_printed_concrete_signatures())
 
 
+# An "input signature" can be optionally provided to tf.function to control the graphs traced.
+# The input signature specifies the shape and type of each Tensor argument to the function using a tf.TensorSpec object.
+# More general shapes can be used.
+#
+# This is useful to avoid creating multiple graphs when Tensors have dynamic shapes.
+# It also restricts the shape and datatype of Tensors that can be used:
 
+@tf.function(
+    input_signature=[tf.TensorSpec(shape=None, dtype=tf.float32)])
+def f(x):
+  return x + 1
+vector = tf.constant([1.0, 1.0])
+matrix = tf.constant([[3.0]])
+print('f.get_concrete_function(vector) is f.get_concrete_function(matrix)=',f.get_concrete_function(vector) is f.get_concrete_function(matrix))
+print('f.pretty_printed_concrete_signatures()',f.pretty_printed_concrete_signatures())
+
+
+# Variables may only be created once
+
+# tf.function only allows creating new tf.Variable objects when it is called for the first time:
+
+class MyModule(tf.Module):
+  def __init__(self):
+    self.x = None
+
+  @tf.function
+  def __call__(self, x):
+    # v = tf.Variable(tf.constant(x)) # ValueError: tf.function-decorated function tried to create variables on non-first call.
+    # return v * (x ** 2)
+    if self.v is None:
+      # self.v = tf.Variable(tf.ones_like(x))
+      self.v = tf.Variable(tf.constant(x))
+    return self.v * (x**2)
+
+AA=MyModule()
+print('MyModule(3)',AA(3))
+print('MyModule(3)',AA(4))
+print('MyModule(3)',AA(5))
+# In general, it is recommended to create stateful objects like tf.Variable outside of tf.function and passing them as arguments.
 
 
 
